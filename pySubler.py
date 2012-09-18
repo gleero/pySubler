@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 '''
-SublerCLI wrapper v1.0
+SublerCLI wrapper v1.0.2
 gleero@gmail.com
 http://gleero.com/
 '''
@@ -98,7 +98,7 @@ class Ratings():
 
 
 # Собственно, сублер
-class Subler():
+class Subler(object):
 
     # Полный путь к сублеру. Ищет сам, но можно и помочь указав в конструкторе прямой путь к SublerCLI, либо бросить его в корень программы
     SublerPath = None
@@ -109,6 +109,9 @@ class Subler():
     # Аргументы командной строки
     Args = ""
 
+    # Событие на завершение работу. Удобно применять с acync=True в методе Save()
+    onFinish = EventHook()
+
 
     # При конвертации в строку объекта будем возвращать аргументы, которые намутили
     def __str__(self):
@@ -117,45 +120,43 @@ class Subler():
 
 
     # Для динамических методов мета-тегов. Вся движуха в __dispatch
-    def __getattr__(self, key):
-
-        try:
-            return object.__getattr__(self, key)
-        except AttributeError:
-            return self.__dispatch(key)
+    def __setattr__(self, key, value):
+            super(Subler, self).__setattr__(key, value)
+            if not isinstance(value, (list, tuple)):
+                value = [ value ]
+            self.__dispatch(key, value)
 
 
     # Конструктор. Инициализируем события и ищем сублера
     def __init__(self, SublerCLIPath="."):
-
-        # Событие на завершение работу. Удобно применять с acync=True в методе Save()
-        self.onFinish = EventHook()
 
         # Пытаемся найти SublerCLI средствами ОС.
         if bool(os.system("which %s > /dev/null" % "SublerCLI")):
 
             # Теперь пытаемся найти в SublerCLIPath. Если прямой путь прописан - замечательно. Если папка, то тоже неплохо. По-умолчанию ищем в корне
             if os.path.isfile(SublerCLIPath) and os.path.exists(SublerCLIPath):
-                self.SublerPath = SublerCLIPath
+                tmp = SublerCLIPath
             else:
                 searchFile = os.path.join(SublerCLIPath, "SublerCLI")
                 if os.path.exists(searchFile):
-                    self.SublerPath = searchFile
+                    tmp = searchFile
 
                 # Вообще нигде ничего не нашли.
                 raise Exception("Программа `SublerCLI` не установлена! Ищите её на http://code.google.com/p/subler/downloads/list")
         else:
             # Нашли средствами ОС, сообщаем полный путь
-            self.SublerPath = subprocess.check_output(["which", "SublerCLI"]).strip()
+            tmp = subprocess.check_output(["which", "SublerCLI"]).strip()
+
+        super(Subler, self).__setattr__('SublerPath', tmp)
 
 
     # Динамические методы для метаданных
-    def __dispatch(self, key):
+    def __dispatch(self, key, args):
 
         # Суть: есть список метатегов. Делаем из них список методов, убирая решетки и пробелы.
         # Пример: 
-        #    obj.Track(1, 20) выдаст {Track #:1/20}
-        #    obj.TVShow("House M. D.") выдаст {TV Show:House M. D.}
+        #    obj.Track = [1, 20] выдаст {Track #:1/20}
+        #    obj.TVShow = "House M. D." выдаст {TV Show:House M. D.}
         # Всё просто.
         # Про метаданные тут: http://code.google.com/p/subler/wiki/SublerCLIHelp
 
@@ -170,51 +171,47 @@ class Subler():
         # Ищем запрошенный метод среди списка возможных
         if key in methods:
 
-            def default(*args):
+            # Большинство тегов просто текстовые, но есть исключения:
+            # Release Date должен содержать данные в формате YYYY-MM-DD
+            # TV Episode ID может быть только числовой
+            # Теги Track # и Disk # должны содержать данные в виде "#/#", поэтому упрощаем апи и делаем два аргумента
 
-                # Большинство тегов просто текстовые, но есть исключения:
-                # Release Date должен содержать данные в формате YYYY-MM-DD
-                # TV Episode ID может быть только числовой
-                # Теги Track # и Disk # должны содержать данные в виде "#/#", поэтому упрощаем апи и делаем два аргумента
+            if len(args) == 1:
 
-                if len(args) == 1:
+                # Для большинства текстовых тегов
+                rets = args[0]
 
-                    # Для большинства текстовых тегов
-                    rets = args[0]
+                # Проверка дополнительных условий
 
-                    # Проверка дополнительных условий
-
-                    # Дата релиза должна соответствовать маске YYYY-MM-DD, поэтому принимает только datetime объект. Ибо нехуй
-                    if key == "ReleaseDate":
-                        if args[0].__class__.__name__ == "date":
-                            rets = args[0].strftime('%Y-%m-%d')
-                        else:
-                            raise Exception("Метод `%s.%s` принимает только объект `datetime`!" % (self.__class__, key))
-
-                    # ID эпизода должен быть только числовой
-                    if key == "TVEpisodeID":
-                        if not str(args[0]).isdigit():
-                            raise Exception("Метод `%s.%s` принимает только число!" % (self.__class__, key))
-
-                    # Добавляем тег и значение
-                    self.MetaTags[metadatas[methods.index(key)]] = rets
-
-                # Те самые Track и Disk с двумя аргументами
-                elif len(args) == 2:
-
-                    if key == "Track" or key == "Disk":
-                        rets = "%s/%s" % (args[0], args[1])
+                # Дата релиза должна соответствовать маске YYYY-MM-DD, поэтому принимает только datetime объект. Ибо нехуй
+                if key == "ReleaseDate":
+                    if args[0].__class__.__name__ == "date":
+                        rets = args[0].strftime('%Y-%m-%d')
                     else:
-                        raise Exception("Только методы `Track` и `Disk` принимают 2 аргумента.")
+                        raise Exception("Метод `%s.%s` принимает только объект `datetime`!" % (self.__class__, key))
 
-                    # Добавляем тег и значение
-                    self.MetaTags[metadatas[methods.index(key)]] = rets
+                # ID эпизода должен быть только числовой
+                if key == "TVEpisodeID":
+                    if not str(args[0]).isdigit():
+                        raise Exception("Метод `%s.%s` принимает только число!" % (self.__class__, key))
 
-                # Число аргументов вообще не то
+                # Добавляем тег и значение
+                self.MetaTags[metadatas[methods.index(key)]] = rets
+
+            # Те самые Track и Disk с двумя аргументами
+            elif len(args) == 2:
+
+                if key == "Track" or key == "Disk":
+                    rets = "%s/%s" % (args[0], args[1])
                 else:
-                    raise Exception("Неверное количество аргументов в `%s.%s`!" % (self.__class__, key))
+                    raise Exception("Только методы `Track` и `Disk` принимают 2 аргумента.")
 
-            return default
+                # Добавляем тег и значение
+                self.MetaTags[metadatas[methods.index(key)]] = rets
+
+            # Число аргументов вообще не то
+            else:
+                raise Exception("Неверное количество аргументов в `%s.%s`!" % (self.__class__, key))
 
 
     # Сохраняем новый файл. Можно асинхронно! Тогда лучше подписаться на событие onFinish
@@ -251,13 +248,13 @@ class Subler():
         self.Args += " -source \"%s\" -dest \"%s\"" % (self.sourceFile, self.destFile)
 
         # Запускаем конвертацию. Можно асинхронно. А можно и нет. Аки полная свобода выбора
-        if acync:
-            t = Thread(target=self.__run)
-            t.daemon = True
-            t.start()
+        # if acync:
+        #     t = Thread(target=self.__run)
+        #     t.daemon = True
+        #     t.start()
 
-        else:
-            self.__run()
+        # else:
+        #     self.__run()
 
 
     # Файл, который мы хотим конвертировать
