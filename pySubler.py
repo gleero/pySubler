@@ -248,13 +248,13 @@ class Subler(object):
         self.Args += " -source \"%s\" -dest \"%s\"" % (self.sourceFile, self.destFile)
 
         # Запускаем конвертацию. Можно асинхронно. А можно и нет. Аки полная свобода выбора
-        # if acync:
-        #     t = Thread(target=self.__run)
-        #     t.daemon = True
-        #     t.start()
+        if acync:
+            t = Thread(target=self.__run)
+            t.daemon = True
+            t.start()
 
-        # else:
-        #     self.__run()
+        else:
+            self.__run()
 
 
     # Файл, который мы хотим конвертировать
